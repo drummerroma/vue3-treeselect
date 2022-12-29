@@ -86,6 +86,10 @@ export default {
       type: Boolean,
       default: false,
     },
+    selectAllOption: {
+      type: Boolean,
+      default: false,
+    },
 
     /**
      * Whether the menu should be always open.
@@ -384,6 +388,10 @@ export default {
       type: Number,
       default: 300,
     },
+    minChar: {
+      type: Number,
+      default: 1,
+    },
 
     /**
      * Set `true` to allow selecting multiple options (a.k.a., multi-select mode).
@@ -640,6 +648,7 @@ export default {
 
   data() {
     return {
+      key: 0,
       trigger: {
         // Is the control focused?
         isFocused: false,
@@ -986,6 +995,7 @@ export default {
         isRootNode: true,
         isLeaf: true,
         isBranch: false,
+        canSelectChildrenEvenIfDisabled: false,
         isDisabled: false,
         isNew: false,
         index: [ -1 ],
@@ -1095,7 +1105,7 @@ export default {
 
     isSelected(node) {
       // whether a node is selected (single-select mode) or fully-checked (multi-select mode)
-      return this.forest.selectedNodeMap[node.id] === true
+      return node && this.forest.selectedNodeMap[node.id] === true
     },
 
     traverseDescendantsBFS(parentNode, callback) {
@@ -1270,41 +1280,44 @@ export default {
 
     handleRemoteSearch() {
       const { searchQuery } = this.trigger
+      const _this66 = this;
       const entry = this.getRemoteSearchEntry()
       const done = () => {
         this.initialize()
         this.resetHighlightedOptionWhenNecessary(true)
       }
-
-      if ((searchQuery === '' || this.cacheOptions) && entry.isLoaded) {
+      console.log(searchQuery, this.minChar);
+      if (((searchQuery === "" && this.minChar > 0) || this.cacheOptions) && entry.isLoaded) {
         return done()
       }
-
-      this.callLoadOptionsProp({
-        action: ASYNC_SEARCH,
-        args: { searchQuery },
-        isPending() {
-          return entry.isLoading
-        },
-        start: () => {
-          entry.isLoading = true
-          entry.isLoaded = false
-          entry.loadingError = ''
-        },
-        succeed: options => {
-          entry.isLoaded = true
-          entry.options = options
-          // When the request completes, the search query may have changed.
-          // We only show these options if they are for the current search query.
-          if (this.trigger.searchQuery === searchQuery) done()
-        },
-        fail: err => {
-          entry.loadingError = getErrorMessage(err)
-        },
-        end: () => {
-          entry.isLoading = false
-        },
-      })
+      if (searchQuery.length >= this.minChar) {
+        this.callLoadOptionsProp({
+          action: ASYNC_SEARCH,
+          args: { searchQuery },
+          isPending() {
+            return entry.isLoading
+          },
+          start: () => {
+            entry.isLoading = true
+            entry.isLoaded = false
+            entry.loadingError = ''
+          },
+          succeed: options => {
+            entry.isLoaded = true
+            entry.options = options
+            // When the request completes, the search query may have changed.
+            // We only show these options if they are for the current search query.
+            if (this.trigger.searchQuery === searchQuery) done()
+          },
+          fail: err => {
+            entry.loadingError = getErrorMessage(err)
+          },
+          end: () => {
+            entry.isLoading = false
+            _this66.key += 1;
+          },
+        })
+      }
     },
 
     getRemoteSearchEntry() {
@@ -1324,7 +1337,7 @@ export default {
         { deep: true },
       )
 
-      if (searchQuery === '') {
+      if (searchQuery === '' && this.minChar > 0) {
         if (Array.isArray(this.defaultOptions)) {
           entry.options = this.defaultOptions
           entry.isLoaded = true
@@ -1463,6 +1476,8 @@ export default {
       this.$nextTick(this.resetHighlightedOptionWhenNecessary)
       this.$nextTick(this.restoreMenuScrollPosition)
       if (!this.options && !this.async) this.loadRootOptions()
+      console.log(this.minChar);
+      if (this.minChar == 0 && this.async) this.handleRemoteSearch();
       this.toggleClickOutsideEvent(true)
       this.$emit('open', this.getInstanceId())
     },
@@ -1532,12 +1547,12 @@ export default {
           this.checkDuplication(node)
           this.verifyNodeShape(node)
 
-          const { id, label, children, isDefaultExpanded } = node
+          const { id, label, children, isDefaultExpanded, canSelectChildrenEvenIfDisabled } = node
           const isRootNode = parentNode === NO_PARENT_NODE
           const level = isRootNode ? 0 : parentNode.level + 1
           const isBranch = Array.isArray(children) || children === null
           const isLeaf = !isBranch
-          const isDisabled = !!node.isDisabled || (!this.flat && !isRootNode && parentNode.isDisabled)
+          const isDisabled = !!node.isDisabled || (!this.flat && !isRootNode && parentNode.isDisabled && !parentNode.canSelectChildrenEvenIfDisabled)
           const isNew = !!node.isNew
           const lowerCased = this.matchKeys.reduce((prev, key) => ({
             ...prev,
@@ -1561,6 +1576,7 @@ export default {
           normalized.lowerCased = lowerCased;
           normalized.nestedSearchLabel = nestedSearchLabel;
           normalized.isDisabled = isDisabled;
+          normalized.canSelectChildrenEvenIfDisabled = canSelectChildrenEvenIfDisabled;
           normalized.isNew = isNew;
           normalized.isMatched = false;
           normalized.isHighlighted = false;
@@ -1897,7 +1913,7 @@ export default {
       if (isFullyChecked) {
         let curr = node
         while ((curr = curr.parentNode) !== NO_PARENT_NODE) {
-          if (curr.children.every(this.isSelected)) this.addValue(curr)
+          if (curr.children.every(this.isSelected) && !curr.isDisabled) this.addValue(curr)
           else break
         }
       }
